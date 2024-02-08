@@ -155,10 +155,14 @@ class CPythonFinder(Finder):
         "linux": "linux",
     }
 
+    # Environments were introduced later. In order to stay as much backwards compatible
+    # and reduce risk of breaking downloads, we only map the environments we must support to
+    # support new download urls. This is musl and gnu for now. For instance msvc is also
+    # an environment, but it is the only one on windows and doesn't change the download, hence
+    # we don't map it.
     ENV_MAPPING = {
         "gnu": "gnu",
-        # We must ignore musl for now
-        # "musl": "musl",
+        "musl": "musl",
     }
 
     FILENAME_RE = re.compile(
@@ -440,8 +444,9 @@ def render(downloads: list[PythonDownload]):
         triple = download.triple
         version = download.version
         sha256 = f'Some("{download.sha256}")' if download.sha256 else "None"
+        env = f'Some(Cow::Borrowed("{triple.environment}"))' if triple.environment else "None"
         print(
-            f'    (PythonVersion {{ name: Cow::Borrowed("{download.implementation}"), arch: Cow::Borrowed("{triple.arch}"), os: Cow::Borrowed("{triple.platform}"), major: {version.major}, minor: {version.minor}, patch: {version.patch}, suffix: None }}, "{download.url}", {sha256}),'
+            f'    (PythonVersion {{ name: Cow::Borrowed("{download.implementation}"), arch: Cow::Borrowed("{triple.arch}"), os: Cow::Borrowed("{triple.platform}"), environment: {env}, major: {version.major}, minor: {version.minor}, patch: {version.patch}, suffix: None }}, "{download.url}", {sha256}),'
         )
 
     print("];")
@@ -495,9 +500,9 @@ class Tests(unittest.TestCase):
             "aarch64-unknown-linux-gnu-pgo+lto": PlatformTriple(
                 "aarch64", "linux", "gnu", "pgo+lto"
             ),
-            # "x86_64-unknown-linux-musl-debug": PlatformTriple(
-            #     "x86_64", "linux", "musl", "debug"
-            # ),
+            "x86_64-unknown-linux-musl-debug": PlatformTriple(
+                "x86_64", "linux", "musl", "debug"
+            ),
             "aarch64-unknown-linux-gnu-debug-full": PlatformTriple(
                 "aarch64", "linux", "gnu", "debug"
             ),
