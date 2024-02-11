@@ -22,6 +22,7 @@ use crate::cli::toolchain::register_toolchain;
 use crate::config::Config;
 use crate::platform::{get_app_dir, symlinks_supported};
 use crate::sources::{get_download_url, PythonVersionRequest};
+use crate::tui;
 use crate::utils::{check_checksum, toml, tui_theme, CommandOutput, QuietExit};
 
 #[cfg(windows)]
@@ -96,9 +97,12 @@ pub struct InstallCommand {
     /// Use a specific toolchain version.
     #[arg(long)]
     toolchain_version: Option<PythonVersionRequest>,
+    /// Do not print anything to stdout or stderr
+    #[arg(long, requires("yes"))]
+    quiet: bool,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum InstallMode {
     Default,
     NoPrompts,
@@ -263,6 +267,7 @@ fn install(args: InstallCommand) -> Result<(), Error> {
         },
         args.toolchain.as_deref(),
         args.toolchain_version,
+        args.quiet,
     )
 }
 
@@ -351,6 +356,7 @@ fn perform_install(
     mode: InstallMode,
     toolchain_path: Option<&Path>,
     toolchain_version: Option<PythonVersionRequest>,
+    quiet: bool,
 ) -> Result<(), Error> {
     let mut config = Config::current();
     let mut registered_toolchain: Option<PythonVersionRequest> = None;
@@ -363,6 +369,13 @@ fn perform_install(
 
     // When we perform an install and a toolchain path has not been passed,
     // we always also pick up on the RYE_TOOLCHAIN environment variable
+    assert! {
+        !quiet || mode == InstallMode::NoPrompts,
+        "quiet mode is only allowed in no-prompt mode"
+    };
+
+    let _guard = tui::quiet(quiet);
+
     // as a fallback.
     let toolchain_path = match toolchain_path {
         Some(path) => Some(Cow::Borrowed(path)),
@@ -639,7 +652,7 @@ pub fn auto_self_install() -> Result<bool, Error> {
             crate::request_continue_prompt();
         }
 
-        perform_install(InstallMode::AutoInstall, None, None)?;
+        perform_install(InstallMode::AutoInstall, None, None, false)?;
         Ok(true)
     }
 }
