@@ -100,6 +100,9 @@ pub struct InstallCommand {
     /// Do not print anything to stdout or stderr
     #[arg(long, requires("yes"))]
     quiet: bool,
+    /// Never modify the path in .profile
+    #[arg(long, requires("yes"))]
+    no_modify_profile: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -268,6 +271,7 @@ fn install(args: InstallCommand) -> Result<(), Error> {
         args.toolchain.as_deref(),
         args.toolchain_version,
         args.quiet,
+        !args.no_modify_profile,
     )
 }
 
@@ -357,6 +361,7 @@ fn perform_install(
     toolchain_path: Option<&Path>,
     toolchain_version: Option<PythonVersionRequest>,
     quiet: bool,
+    modify_profile: bool,
 ) -> Result<(), Error> {
     let mut config = Config::current();
     let mut registered_toolchain: Option<PythonVersionRequest> = None;
@@ -557,13 +562,14 @@ fn perform_install(
             );
             echo!("It is highly recommended that you add it.");
 
-            if matches!(mode, InstallMode::NoPrompts)
-                || dialoguer::Confirm::with_theme(tui_theme())
-                    .with_prompt(format!(
-                        "Should the installer add Rye to {} via .profile?",
-                        style("PATH").cyan()
-                    ))
-                    .interact()?
+            if modify_profile
+                && (matches!(mode, InstallMode::NoPrompts)
+                    || dialoguer::Confirm::with_theme(tui_theme())
+                        .with_prompt(format!(
+                            "Should the installer add Rye to {} via .profile?",
+                            style("PATH").cyan()
+                        ))
+                        .interact()?)
             {
                 crate::utils::unix::add_to_path(rye_home)?;
                 echo!("Added to {}.", style("PATH").cyan());
@@ -652,7 +658,7 @@ pub fn auto_self_install() -> Result<bool, Error> {
             crate::request_continue_prompt();
         }
 
-        perform_install(InstallMode::AutoInstall, None, None, false)?;
+        perform_install(InstallMode::AutoInstall, None, None, false, true)?;
         Ok(true)
     }
 }
