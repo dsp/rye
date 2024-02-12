@@ -6,6 +6,7 @@ authors = [{ name = "Armin Ronacher", email = "armin.ronacher@active-4.com" }]
 dependencies = [
     "requests>=2.31.0",
     "isort>=5.13.2",
+    "httpx>=0.26.0",
 ]
 requires-python = ">= 3.11"
 
