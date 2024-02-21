@@ -31,14 +31,14 @@ pub const SELF_PYTHON_TARGET_VERSION: PythonVersionRequest = PythonVersionReques
     name: Some(Cow::Borrowed("cpython")),
     arch: None,
     os: None,
-    environment: None,
+    environment: if cfg!(target_env = "musl") { Some(Cow::Borrowed("musl")) } else { None} ,
     major: 3,
     minor: Some(12),
     patch: None,
     suffix: None,
 };
 
-const SELF_VERSION: u64 = 14;
+const SELF_VERSION: u64 = 15;
 
 const SELF_REQUIREMENTS: &str = r#"
 build==1.0.3
@@ -124,7 +124,7 @@ pub fn ensure_self_venv_with_toolchain(
     let py_bin = get_toolchain_python_bin(&version)?;
 
     // linux specific detection of shared libraries.
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(target_env="musl")))]
     {
         validate_shared_libraries(&py_bin)?;
     }
@@ -132,7 +132,7 @@ pub fn ensure_self_venv_with_toolchain(
     // initialize the virtualenv
     let mut venv_cmd = Command::new(&py_bin);
     venv_cmd.arg("-mvenv");
-    venv_cmd.arg("--upgrade-deps");
+//    venv_cmd.arg("--upgrade-deps");
 
     // unlike virtualenv which we use after bootstrapping, the stdlib python
     // venv does not detect symlink support itself and needs to be coerced into

@@ -9,7 +9,7 @@ mod common;
 fn test_bootstrap_linux_musl() {
     let space = Space::new();
     space.init("my-project");
-    rye_cmd_snapshot!(space.rye_cmd().arg("default.toolchain").arg("cpython-x86_64-linux-musl@3.12.1"), @r###"
+    rye_cmd_snapshot!(space.rye_cmd().arg("config").arg("--set").arg("default.toolchain=cpython-x86_64-linux-musl@3.12.1"), @r###"
     success: true
     exit_code: 0
     ----- stdout -----
@@ -61,6 +61,26 @@ fn test_bootstrap_linux_musl() {
 
     ----- stderr -----
     Hello from my-project!
+    "###);
+
+    space.write(
+        "src/my_project/__init__.py", r#"
+import sysconfig
+def hello():
+    cc = sysconfig.get_config_var('CC')
+    linkcc = sysconfig.get_config_var('LINKCC')
+    if 'musl' in cc and 'musl' in linkcc:
+        return 0
+    else:
+        return 1
+"#);
+
+    rye_cmd_snapshot!(space.rye_cmd().arg("run").arg("hello"), @r###"
+    success: true
+    exit_code: 0
+    ----- stdout -----
+
+    ----- stderr -----
     "###);
 }
 

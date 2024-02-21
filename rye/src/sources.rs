@@ -309,7 +309,7 @@ impl fmt::Display for PythonVersionRequest {
 
 fn default_environment(os: &str) -> Option<&str> {
     match os {
-        "linux" => Some("gnu"),
+        "linux" => if cfg!(target_env = "musl") { Some("musl") } else { Some("gnu") },
         _ => None,
     }
 }
