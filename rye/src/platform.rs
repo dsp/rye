@@ -59,6 +59,13 @@ pub fn get_canonical_py_path(version: &PythonVersion) -> Result<PathBuf, Error> 
     Ok(rv)
 }
 
+pub fn get_canonical_uv_path(version: &str) -> Result<PathBuf, Error> {
+    let mut rv = get_app_dir().to_path_buf();
+    rv.push("uv");
+    rv.push(version);
+    Ok(rv)
+}
+
 /// Returns the path of the python binary for the given version.
 pub fn get_toolchain_python_bin(version: &PythonVersion) -> Result<PathBuf, Error> {
     let mut p = get_canonical_py_path(version)?;

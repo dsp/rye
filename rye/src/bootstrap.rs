@@ -16,8 +16,8 @@ use crate::config::Config;
 use crate::consts::VENV_BIN;
 use crate::piptools::LATEST_PIP;
 use crate::platform::{
-    get_app_dir, get_canonical_py_path, get_toolchain_python_bin, list_known_toolchains,
-    symlinks_supported,
+    get_app_dir, get_canonical_py_path, get_canonical_uv_path, get_toolchain_python_bin,
+    list_known_toolchains, symlinks_supported,
 };
 use crate::pyproject::{latest_available_python_version, write_venv_marker};
 use crate::sources::{get_download_url, PythonVersion, PythonVersionRequest};
@@ -38,7 +38,9 @@ pub const SELF_PYTHON_TARGET_VERSION: PythonVersionRequest = PythonVersionReques
     suffix: None,
 };
 
-const SELF_VERSION: u64 = 15;
+const SELF_VERSION: u64 = 16;
+
+pub const SELF_UV_TARGET_VERSION: &'static str = "0.1.7";
 
 const SELF_REQUIREMENTS: &str = r#"
 build==1.0.3
@@ -58,7 +60,7 @@ unearth==0.14.0
 urllib3==2.0.7
 virtualenv==20.25.0
 ruff==0.2.2
-uv==0.1.6
+uv==0.1.7
 "#;
 
 static FORCED_TO_UPDATE: AtomicBool = AtomicBool::new(false);
@@ -124,46 +126,135 @@ pub fn ensure_self_venv_with_toolchain(
     let py_bin = get_toolchain_python_bin(&version)?;
 
     // linux specific detection of shared libraries.
-    #[cfg(all(target_os = "linux", not(target_env="musl")))]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     {
         validate_shared_libraries(&py_bin)?;
     }
 
+    let uv = UV::new(output);
+    uv.create_venv(&py_bin, &venv_dir)?;
     // initialize the virtualenv
-    let mut venv_cmd = Command::new(&py_bin);
-    venv_cmd.arg("-mvenv");
-//    venv_cmd.arg("--upgrade-deps");
+//     let mut venv_cmd = Command::new(&py_bin);
+//     venv_cmd.arg("-mvenv");
+// //    venv_cmd.arg("--upgrade-deps");
+//     venv_cmd.arg("--without-pip");
 
-    // unlike virtualenv which we use after bootstrapping, the stdlib python
-    // venv does not detect symlink support itself and needs to be coerced into
-    // when available.
-    if cfg!(windows) && symlinks_supported() {
-        venv_cmd.arg("--symlinks");
-    }
+//     // unlike virtualenv which we use after bootstrapping, the stdlib python
+//     // venv does not detect symlink support itself and needs to be coerced into
+//     // when available.
+//     if cfg!(windows) && symlinks_supported() {
+//         venv_cmd.arg("--symlinks");
+//     }
 
-    venv_cmd.arg(&venv_dir);
-    set_proxy_variables(&mut venv_cmd);
+//     venv_cmd.arg(&venv_dir);
+//     set_proxy_variables(&mut venv_cmd);
 
-    let status = venv_cmd.status().with_context(|| {
-        format!(
-            "unable to create self venv using {}. It might be that \
-             the used Python build is incompatible with this machine. \
-             For more information see https://rye-up.com/guide/installation/",
-            py_bin.display()
-        )
-    })?;
-    if !status.success() {
-        bail!("failed to initialize virtualenv in {}", venv_dir.display());
-    }
+//     let status = venv_cmd.status().with_context(|| {
+//         format!(
+//             "unable to create self venv using {}. It might be that \
+//              the used Python build is incompatible with this machine. \
+//              For more information see https://rye-up.com/guide/installation/",
+//             py_bin.display()
+//         )
+//     })?;
+//     if !status.success() {
+//         bail!("failed to initialize virtualenv in {}", venv_dir.display());
+//     }
 
     write_venv_marker(&venv_dir, &version)?;
 
-    do_update(output, &venv_dir, app_dir)?;
+    uv.self_update(&venv_dir)?;
+    uv.update_requirements(&venv_dir)?;
+
+    let shims = app_dir.join("shims");
+    if !shims.is_dir() {
+        fs::create_dir_all(&shims).context("tried to create shim folder")?;
+    }
+
+    // if rye is itself installed into the shims folder, we want to
+    // use that.  Otherwise we fall back to the current executable
+    let mut this = shims.join("rye").with_extension(EXE_EXTENSION);
+    if !this.is_file() {
+        this = env::current_exe()?;
+    }
+
+    update_core_shims(&shims, &this)?;
 
     fs::write(venv_dir.join("tool-version.txt"), SELF_VERSION.to_string())?;
     FORCED_TO_UPDATE.store(true, atomic::Ordering::Relaxed);
 
     Ok(venv_dir)
+}
+
+struct UV {
+    output: CommandOutput,
+}
+
+impl UV {
+    fn new(output: CommandOutput) -> Self {
+        Self { output }
+    }
+    
+    fn uv_bin(&self) -> Result<PathBuf, Error> {
+        ensure_uv(SELF_UV_TARGET_VERSION, self.output)?;
+        let path = get_canonical_uv_path(SELF_UV_TARGET_VERSION)?
+            .join("uv")
+            .to_path_buf();
+
+        Ok(path)
+    }
+
+    fn create_venv(&self, py_bin: &Path, venv_dir: &Path) -> Result<(), Error> {
+        let uv_bin = self.uv_bin()?;
+        Command::new(uv_bin)
+            .arg("venv")    
+            .arg("--python")
+            .arg(py_bin)
+            .arg(venv_dir)
+            .status()
+            .with_context(||
+                format!(
+                    "unable to create self venv using {}. It might be that \
+                     the used Python build is incompatible with this machine. \
+                     For more information see https://rye-up.com/guide/installation/",
+                    py_bin.display()
+                )
+            )?;
+        Ok(())
+    }
+
+    fn self_update(&self, venv_dir: &Path) -> Result<(), Error> {
+        let uv_bin = self.uv_bin()?;
+        Command::new(uv_bin)
+            .env("VIRTUAL_ENV", venv_dir)
+            .arg("pip")
+            .arg("install")
+            .arg("--upgrade")
+            .arg("--verbose")
+            .arg("uv")
+            .status()
+            .context("unable to self-ugprade uv")?;
+
+        Ok(())
+    }
+
+    fn update_requirements(&self, venv_dir: &Path) -> Result<(), Error> {
+        let uv_bin = self.uv_bin()?;
+
+        let mut req_file = NamedTempFile::new()?;
+        writeln!(req_file, "{}", SELF_REQUIREMENTS)?;
+
+        Command::new(uv_bin)
+            .env("VIRTUAL_ENV", venv_dir)
+            .arg("pip")
+            .arg("install")
+            .arg("-r")
+            .arg(req_file.path())
+            .arg("--verbose")
+            .status()
+            .context("unable to install dependencies")?;
+        Ok(())
+    }
 }
 
 fn do_update(output: CommandOutput, venv_dir: &Path, app_dir: &Path) -> Result<(), Error> {
@@ -456,6 +547,30 @@ pub fn fetch(
     Ok(version)
 }
 
+pub fn ensure_uv(version: &str, output: CommandOutput) -> Result<(), Error> {
+    let target_dir = get_canonical_uv_path(version)?;
+
+    if target_dir.exists() {
+        // TODO: Version checks
+        return Ok(());
+    }
+
+    fs::create_dir_all(&target_dir)
+        .with_context(|| format!("failed to create target folder {}", target_dir.display()))?;
+
+    let url = "file:///root/uv/uv-x86_64-unknown-linux-musl.tar.gz";
+    if output != CommandOutput::Quiet {
+        echo!("download url: {}", url);
+    }
+
+    let uv_archive_buffer = download_url(url, output)?;
+    unpack_archive(&uv_archive_buffer, &target_dir, 1)
+        .with_context(|| format!("unpacking of download tarball {} failed", &url))?;
+
+    // TODO: Read version and return it
+    Ok(())
+}
+
 pub fn download_url(url: &str, output: CommandOutput) -> Result<Vec<u8>, Error> {
     match download_url_ignore_404(url, output)? {
         Some(result) => Ok(result),
@@ -465,7 +580,7 @@ pub fn download_url(url: &str, output: CommandOutput) -> Result<Vec<u8>, Error> 
 
 pub fn download_url_ignore_404(url: &str, output: CommandOutput) -> Result<Option<Vec<u8>>, Error> {
     // for now we only allow HTTPS downloads.
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") && !url.starts_with("file://") {
         bail!("Refusing insecure download");
     }
 
@@ -527,7 +642,7 @@ pub fn download_url_ignore_404(url: &str, output: CommandOutput) -> Result<Optio
     let code = handle.response_code()?;
     if code == 404 {
         Ok(None)
-    } else if !(200..300).contains(&code) {
+    } else if !(200..300).contains(&code) && code != 0 {
         bail!("Failed to download: {}", code)
     } else {
         Ok(Some(archive_buffer))
